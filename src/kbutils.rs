@@ -2,12 +2,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
-use multiinput::KeyboardDisplayInfo;
-
-pub fn get_keyboard_name(keyboard: &KeyboardDisplayInfo) -> &str {
-    return &keyboard.name[..keyboard.name.len() - 1];
-}
-
 pub fn load_key_value_file(path: &Path) -> HashMap<String, String> {
     let content = std::fs::read_to_string(path).unwrap_or_default();
     let mut values: HashMap<String, String> = HashMap::new();

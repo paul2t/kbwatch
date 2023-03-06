@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
@@ -16,9 +15,6 @@ use chrono::Local;
 use anyhow::bail;
 use anyhow::Result;
 
-use multiinput::DeviceType;
-use multiinput::RawInputManager;
-
 use crossbeam_channel::{bounded, select, tick, Receiver};
 
 use hostname;
@@ -27,6 +23,9 @@ use serde_json::json;
 
 mod kbutils;
 use crate::kbutils::*;
+
+mod kbdevice;
+use crate::kbdevice::*;
 
 fn main() {
     let app_dir = get_app_dir();
@@ -49,12 +48,6 @@ fn main() {
         error!("{:#?}", e);
     }
 
-    // Load aliases
-    let aliases = load_aliases(&app_dir);
-    for (name, alias) in &aliases {
-        info!("{} => {}", name, alias);
-    }
-
     // Log still running in separate log file
     let mut run_log = app_dir.to_path_buf();
     run_log.push("running.log");
@@ -65,14 +58,14 @@ fn main() {
         .expect("Unable to save the running logs");
 
     // App data
-    let mut device_list: Vec<String> = Vec::new();
+    let mut device_list: Vec<DeviceInfos> = Vec::new();
 
     // App events
     let ctrlc_events = ctrl_channel().expect("Unable to catch CTRL+C");
     let ticks_min = tick(Duration::from_secs(60));
     let ticks_sec = tick(Duration::from_secs(1));
 
-    watch_keyboard_changes(&config, &mut device_list, &aliases, &computer_name);
+    watch_keyboard_changes(&config, &mut device_list, &computer_name);
 
     loop {
         select! {
@@ -83,7 +76,7 @@ fn main() {
                 std::process::exit(1);
             }
             recv(ticks_sec) -> _ => {
-                watch_keyboard_changes(&config, &mut device_list, &aliases, &computer_name);
+                watch_keyboard_changes(&config, &mut device_list, &computer_name);
             }
             recv(ticks_min) -> _ => {
                 let time = Local::now();
@@ -96,81 +89,100 @@ fn main() {
 
 fn watch_keyboard_changes(
     config: &KBConfig,
-    device_list: &mut Vec<String>,
-    aliases: &HashMap<String, String>,
+    device_list: &mut Vec<DeviceInfos>,
     computer_name: &str,
 ) {
-    let mut manager = RawInputManager::new().unwrap();
-    manager.register_devices(DeviceType::Keyboards);
-    let devices = manager.get_device_list();
+    let usb_devices = match rusb::devices() {
+        Ok(devices) => {
+            let mut list = Vec::with_capacity(devices.len());
+            for d in devices.iter() {
+                list.push(d);
+            }
+            list
+        }
+        Err(e) => {
+            error!("{e}");
+            Vec::new()
+        }
+    };
 
-    let mut new_devices: Vec<String> = Vec::new();
+    let mut new_devices: Vec<DeviceInfos> = Vec::new();
+    let mut devices: Vec<Device> = Vec::with_capacity(usb_devices.len());
     let mut removed_devices: Vec<usize> = Vec::new();
 
-    for (i, device) in device_list.iter().enumerate() {
-        let mut found = false;
-        for keyboard in &devices.keyboards {
-            if *device == get_keyboard_name(keyboard) {
-                found = true;
-                break;
-            }
-        }
+    // Find new devices
+    for device in &usb_devices {
+        let desc = match device.device_descriptor() {
+            Ok(desc) => desc,
+            Err(_) => continue, // Ignore devices that don't have a descriptor.
+        };
+        let handle = match device.open() {
+            Ok(h) => h,
+            Err(_) => continue, // Ignore devices that we cannot open.
+        };
 
-        if !found {
+        let dev = Device::new(&device, &desc);
+        devices.push(dev);
+
+        if !device_list.iter().map(|x| x.device).any(|x| x == dev) {
+            let infos = DeviceInfos::new(dev, &handle, &desc);
+            new_devices.push(infos);
+        }
+    }
+
+    // Find removed devices
+    for (i, device) in device_list.iter().enumerate() {
+        if !devices.contains(&device.device) {
             removed_devices.push(i);
         }
     }
 
-    for keyboard in &devices.keyboards {
-        let mut found = false;
-        for device in device_list.iter() {
-            if *device == get_keyboard_name(keyboard) {
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            new_devices.push(get_keyboard_name(keyboard).to_string());
-        }
-    }
-
-    let mut new_aliases: Vec<String> = Vec::new();
-    let mut removed_aliases: Vec<String> = Vec::new();
-
     if removed_devices.len() > 0 {
-        for device_index in removed_devices.iter().rev() {
-            if *device_index >= device_list.len() {
+        for device_index in removed_devices.iter().rev().map(|x| *x) {
+            if device_index >= device_list.len() {
+                error!(
+                    "Invalid index {} when device_list.len() == {}",
+                    device_index,
+                    device_list.len()
+                );
                 continue;
             }
-            let alias = get_alias(&device_list[*device_index], aliases);
-            if !removed_aliases.iter().any(|x| *x == alias) {
-                if alias != "INTERNAL" {
-                    if let Err(e) = send_message(
-                        config,
-                        &format!("keyboard {alias} unplugged from {computer_name}"),
-                    ) {
-                        error!("{:#?}", e);
-                    }
-                }
-                removed_aliases.push(alias.to_string());
+            let device = &device_list[device_index];
+            info!(
+                "Removed device: Bus {:03} | Address {:03} | ID {:04x}:{:04x} | {} | {} | {}",
+                device.device.bus,
+                device.device.address,
+                device.device.vendor_id,
+                device.device.product_id,
+                device.manufacturer,
+                device.product,
+                device.serial
+            );
+
+            let name = device.get_name();
+            if let Err(e) = send_message(config, &format!("{name} unplugged from {computer_name}"))
+            {
+                error!("{:#?}", e);
             }
-            device_list.remove(*device_index);
+            device_list.remove(device_index);
         }
     }
 
     if new_devices.len() > 0 {
         for device in &new_devices {
-            let alias = get_alias(&*device, aliases);
-            if !new_aliases.iter().any(|x| *x == alias) {
-                if alias != "INTERNAL" {
-                    if let Err(e) = send_message(
-                        config,
-                        &format!("keyboard {alias} plugged in {computer_name}"),
-                    ) {
-                        error!("{:#?}", e);
-                    }
-                }
-                new_aliases.push(alias.to_string());
+            info!(
+                "New device: Bus {:03} | Address {:03} | ID {:04x}:{:04x} | {} | {} | {}",
+                device.device.bus,
+                device.device.address,
+                device.device.vendor_id,
+                device.device.product_id,
+                device.manufacturer,
+                device.product,
+                device.serial
+            );
+            let name = device.get_name();
+            if let Err(e) = send_message(config, &format!("{name} plugged in {computer_name}")) {
+                error!("{:#?}", e);
             }
         }
         device_list.append(&mut new_devices);
@@ -197,7 +209,10 @@ fn load_config(app_dir: &Path) -> KBConfig {
         .map(|x| x.to_string())
         .unwrap_or_default();
 
+    let mut config_changed = false;
+
     while telegram_bot_token.is_empty() {
+        config_changed = true;
         println!("No bot token found. What token do you want to use ? https://telegram.me/BotFather to create a new one.");
         let mut line = String::new();
         std::io::stdin().read_line(&mut line).unwrap_or_default();
@@ -222,6 +237,7 @@ fn load_config(app_dir: &Path) -> KBConfig {
     }
 
     while telegram_chat_id.is_empty() {
+        config_changed = true;
         println!("No chat id found. Send a message to the bot to initialize the chat id.");
 
         let mut first = true;
@@ -289,17 +305,20 @@ fn load_config(app_dir: &Path) -> KBConfig {
         }
     }
 
-    let config_str =
-        format!("TELEGRAM_BOT_TOKEN {telegram_bot_token}\nTELEGRAM_CHAT_ID {telegram_chat_id}\n");
-    let mut file = File::create(&path).expect(&format!(
-        "Unable to write config file : {}",
-        path.to_string_lossy()
-    ));
-    file.write(config_str.as_bytes()).expect(&format!(
-        "Error while saving config to file {}",
-        path.to_string_lossy()
-    ));
-    eprintln!("Config saved in {}", path.to_string_lossy());
+    if config_changed {
+        let config_str = format!(
+            "TELEGRAM_BOT_TOKEN {telegram_bot_token}\nTELEGRAM_CHAT_ID {telegram_chat_id}\n"
+        );
+        let mut file = File::create(&path).expect(&format!(
+            "Unable to write config file : {}",
+            path.to_string_lossy()
+        ));
+        file.write(config_str.as_bytes()).expect(&format!(
+            "Error while saving config to file {}",
+            path.to_string_lossy()
+        ));
+        eprintln!("Config saved in {}", path.to_string_lossy());
+    }
 
     KBConfig {
         telegram_bot_token,
@@ -339,7 +358,7 @@ fn send_message_ex(config: &KBConfig, message: &str, silent: bool) -> Result<()>
         bail!("Empty message to send");
     }
     let json = json!(message);
-    info!("{message}");
+    info!("send message: {message}");
 
     let data_str = format!(
         "{{\"chat_id\": \"{}\", \"text\": {json}, \"disable_notification\": {silent}}}",
