@@ -28,6 +28,19 @@ mod kbdevice;
 use crate::kbdevice::*;
 
 fn main() {
+
+    use nokhwa::utils::CameraIndex;
+    use nokhwa::{native_api_backend, query};
+
+    let backend = native_api_backend().unwrap();
+    let devices = query(backend).unwrap();
+    println!("There are {} available cameras.", devices.len());
+    for device in devices {
+        println!("{device}");
+    }
+
+    return;
+
     let app_dir = get_app_dir();
     if !app_dir.exists() {
         std::fs::create_dir(&app_dir).expect(&format!(
