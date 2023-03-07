@@ -40,11 +40,19 @@ impl DeviceInfos {
             device,
             manufacturer: handle
                 .read_manufacturer_string_ascii(&desc)
-                .unwrap_or_default(),
-            product: handle.read_product_string_ascii(&desc).unwrap_or_default(),
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            product: handle
+                .read_product_string_ascii(&desc)
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
             serial: handle
                 .read_serial_number_string_ascii(&desc)
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
         }
     }
 
