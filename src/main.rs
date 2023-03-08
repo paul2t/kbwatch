@@ -2,11 +2,18 @@
 
 use std::fs;
 use std::fs::File;
+use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
 use log::{error, info};
+use nokhwa::CallbackCamera;
+use nokhwa::Camera;
+use nokhwa::pixel_format::RgbAFormat;
+use nokhwa::pixel_format::RgbFormat;
+use nokhwa::utils::RequestedFormat;
+use nokhwa::utils::RequestedFormatType;
 use serde_json::Value;
 use simple_log::LogConfigBuilder;
 
@@ -35,11 +42,59 @@ fn main() {
     let backend = native_api_backend().unwrap();
     let devices = query(backend).unwrap();
     println!("There are {} available cameras.", devices.len());
+    let mut index = CameraIndex::Index(1);
     for device in devices {
         println!("{device}");
+        if device.human_name() == "JOYACESS" {
+            index = CameraIndex::Index(device.index().as_index().unwrap());
+        }
+    }
+
+    // first camera in system
+    // let index = CameraIndex::index(0); 
+    
+    // request the absolute highest resolution CameraFormat that can be decoded to RGB.
+    let format = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
+    // make the camera
+    let mut camera = CallbackCamera::new(index, format, |buffer| {
+        let image = buffer.decode_image::<RgbAFormat>().unwrap();
+        println!("{}x{}={}", image.width(), image.height(), image.len());
+    }).unwrap();
+
+    camera.open_stream().unwrap();
+    #[allow(clippy::empty_loop)] // keep it running
+    loop {
+        let frame = camera.poll_frame().unwrap();
+        let image = frame.decode_image::<RgbAFormat>().unwrap();
+        println!(
+            "{}x{} {} naripoggers",
+            image.width(),
+            image.height(),
+            image.len()
+        );
     }
 
     return;
+
+    // get a frame
+    // let frame = camera.frame().unwrap();
+    // println!("Captured Single Frame of {}", frame.buffer().len());
+    // // decode into an ImageBuffer
+    // let decoded = frame.decode_image::<RgbFormat>().unwrap();
+    // println!("Decoded Frame of {}", decoded.len());
+
+    // println!("{:#?}", decoded.dimensions());
+    // // let mut bytes: Vec<u8> = Vec::new();
+    // // use image;
+    // // use std::io::Cursor;
+    // // decoded.write_to(&mut Cursor::new(&mut bytes), image::ImageOutputFormat::Png);
+
+    // if let Err(r) = decoded.save("capture.png") {
+    //     println!("ERROR: {:#?}", r);
+    // }
+    
+
+    // return;
 
     let app_dir = get_app_dir();
     if !app_dir.exists() {
