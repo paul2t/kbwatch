@@ -38,7 +38,7 @@ use nokhwa::{
 };
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{self, Duration};
 
 struct CaptureState {
     receiver: Arc<Receiver<Buffer>>,
@@ -144,8 +144,8 @@ impl FromStr for RequestedCliFormat {
     type Err = Report;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let splitted = s.split(":").collect::<Vec<&str>>();
-        if splitted.len() == 0 {
+        let splitted = s.split(':').collect::<Vec<&str>>();
+        if splitted.is_empty() {
             return Err(Report::msg("empty string"));
         }
 
@@ -167,7 +167,7 @@ impl RequestedCliFormat {
             )),
             "HighestResolution" => {
                 let fmtv = self.format_option.unwrap();
-                let values = fmtv.split(",").collect::<Vec<&str>>();
+                let values = fmtv.split(',').collect::<Vec<&str>>();
                 let x = values[0].parse::<u32>().unwrap();
                 let y = values[1].parse::<u32>().unwrap();
                 let resolution = Resolution::new(x, y);
@@ -185,7 +185,7 @@ impl RequestedCliFormat {
             }
             "Exact" => {
                 let fmtv = self.format_option.unwrap();
-                let values = fmtv.split(",").collect::<Vec<&str>>();
+                let values = fmtv.split(',').collect::<Vec<&str>>();
                 let x = values[0].parse::<u32>().unwrap();
                 let y = values[1].parse::<u32>().unwrap();
                 let fps = values[2].parse::<u32>().unwrap();
@@ -199,7 +199,7 @@ impl RequestedCliFormat {
             }
             "Closest" => {
                 let fmtv = self.format_option.unwrap();
-                let values = fmtv.split(",").collect::<Vec<&str>>();
+                let values = fmtv.split(',').collect::<Vec<&str>>();
                 let x = values[0].parse::<u32>().unwrap();
                 let y = values[1].parse::<u32>().unwrap();
                 let fps = values[2].parse::<u32>().unwrap();
@@ -326,8 +326,7 @@ fn nokhwa_main() {
             display,
             requested,
         } => {
-            let requested = requested.as_ref().map(|x| x.clone().make_requested())
-                .flatten()
+            let requested = requested.as_ref().and_then(|x| x.clone().make_requested())
                 .expect("Expected AbsoluteHighestResolution, AbsoluteHighestFrameRate, HighestResolution, HighestFrameRate, Exact, Closest, or None");
 
             let index = match device.as_ref().unwrap_or(&IndexKind::Index(0)) {
@@ -367,7 +366,9 @@ fn nokhwa_main() {
                 .unwrap();
 
                 cb.open_stream().unwrap();
-                loop {}
+                loop {
+                    std::thread::sleep(time::Duration::from_millis(10));
+                }
             }
         }
         CommandsProper::Single {
@@ -380,8 +381,7 @@ fn nokhwa_main() {
                 IndexKind::Index(i) => CameraIndex::Index(*i),
             };
 
-            let requested = requested.clone().map(|x| x.make_requested())
-                .flatten()
+            let requested = requested.clone().and_then(|x| x.make_requested())
                 .expect("Expected AbsoluteHighestResolution, AbsoluteHighestFrameRate, HighestResolution, HighestFrameRate, Exact, Closest, or None");
 
             let mut camera = Camera::new(index, requested).unwrap();
