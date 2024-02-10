@@ -2,36 +2,56 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
-pub fn load_key_value_file(path: &Path) -> HashMap<String, String> {
+type KeyValues = HashMap<String, Vec<String>>;
+type Aliases = KeyValues;
+
+pub fn load_key_value_file(path: &Path) -> KeyValues {
     let content = std::fs::read_to_string(path).unwrap_or_default();
-    let mut values: HashMap<String, String> = HashMap::new();
+    let mut values: KeyValues = HashMap::new();
     for line in content.lines() {
         if let Some((key, value)) = line.split_once(' ') {
-            if key.len() > 0 && value.len() > 0 {
-                values.insert(key.trim().to_string(), value.trim().to_string());
+            if !key.is_empty() && !value.is_empty() {
+                let key = key.trim().to_string();
+                let value = value.trim().to_string();
+                if !values.contains_key(&key) {
+                    values.insert(key.clone(), Vec::new());
+                }
+                values.get_mut(&key).unwrap().push(value);
             }
         }
     }
     values
 }
 
-pub fn load_aliases(app_dir: &Path) -> HashMap<String, String> {
+pub fn load_aliases(app_dir: &Path) -> Aliases {
     let mut alias_path = app_dir.to_path_buf();
     alias_path.push("alias.txt");
     load_key_value_file(&alias_path)
 }
 
-fn get_alias_raw<'a>(name: &'a str, aliases: &'a HashMap<String, String>) -> &'a str {
+fn get_alias_opt<'a>(name: &'a str, aliases: &'a Aliases) -> Option<&'a str> {
     if let Some(alias) = aliases.get(name) {
-        &alias[..]
+        if let Some(alias) = alias.first() {
+            Some(&alias[..])
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+fn get_alias_raw<'a>(name: &'a str, aliases: &'a Aliases) -> &'a str {
+    if let Some(alias) = get_alias_opt(name, aliases) {
+        alias
     } else {
         name
     }
 }
 
-pub fn get_alias<'a>(name: &'a str, aliases: &'a HashMap<String, String>) -> &'a str {
-    if let Some(alias) = aliases.get(name) {
-        &alias[..]
+pub fn get_alias<'a>(name: &'a str, aliases: &'a Aliases) -> &'a str {
+    if let Some(alias) = get_alias_opt(name, aliases) {
+        alias
     } else {
         let name = name.trim_start_matches(r"\\?\");
         if !name.starts_with(r"HID#VID_") {
@@ -42,7 +62,7 @@ pub fn get_alias<'a>(name: &'a str, aliases: &'a HashMap<String, String>) -> &'a
                 Some((name, _remainder)) => name,
                 None => name,
             };
-            let mut split = name.split('&').into_iter();
+            let mut split = name.split('&');
             let vid = split.next().unwrap_or_default();
             let pid = split.next().unwrap_or_default();
             if !vid.is_empty() && !pid.is_empty() {

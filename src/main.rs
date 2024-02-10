@@ -17,8 +17,6 @@ use anyhow::Result;
 
 use crossbeam_channel::{bounded, select, tick, Receiver};
 
-use hostname;
-use reqwest;
 use serde_json::json;
 
 mod kbutils;
@@ -30,10 +28,8 @@ use crate::kbdevice::*;
 fn main() {
     let app_dir = get_app_dir();
     if !app_dir.exists() {
-        std::fs::create_dir(&app_dir).expect(&format!(
-            "Unable to create directory {}",
-            app_dir.to_string_lossy()
-        ));
+        std::fs::create_dir(&app_dir)
+            .unwrap_or_else(|_| panic!("Unable to create directory {}", app_dir.to_string_lossy()));
     }
     let config = load_config(&app_dir);
 
@@ -121,12 +117,14 @@ fn watch_keyboard_changes(
             Err(_) => continue, // Ignore devices that we cannot open.
         };
 
-        let dev = Device::new(&device, &desc);
+        let dev = Device::new(device, &desc);
         devices.push(dev);
 
         if !device_list.iter().map(|x| x.device).any(|x| x == dev) {
             let infos = DeviceInfos::new(dev, &handle, &desc);
-            new_devices.push(infos);
+            if !config.ignored_devices.contains(&infos.get_name()) {
+                new_devices.push(infos);
+            }
         }
     }
 
@@ -137,8 +135,8 @@ fn watch_keyboard_changes(
         }
     }
 
-    if removed_devices.len() > 0 {
-        for device_index in removed_devices.iter().rev().map(|x| *x) {
+    if !removed_devices.is_empty() {
+        for device_index in removed_devices.iter().rev().copied() {
             if device_index >= device_list.len() {
                 error!(
                     "Invalid index {} when device_list.len() == {}",
@@ -168,7 +166,7 @@ fn watch_keyboard_changes(
         }
     }
 
-    if new_devices.len() > 0 {
+    if !new_devices.is_empty() {
         for device in &new_devices {
             info!(
                 "New device: Bus {:03} | Address {:03} | ID {:04x}:{:04x} | {} | {} | {}",
@@ -193,6 +191,7 @@ fn watch_keyboard_changes(
 struct KBConfig {
     telegram_bot_token: String,
     telegram_chat_id: String,
+    ignored_devices: Vec<String>,
 }
 
 fn load_config(app_dir: &Path) -> KBConfig {
@@ -202,12 +201,13 @@ fn load_config(app_dir: &Path) -> KBConfig {
 
     let mut telegram_bot_token = configs
         .get("TELEGRAM_BOT_TOKEN")
-        .map(|x| x.to_string())
+        .map(|x| x.first().map(|it| it.to_string()).unwrap_or_default())
         .unwrap_or_default();
     let mut telegram_chat_id = configs
         .get("TELEGRAM_CHAT_ID")
-        .map(|x| x.to_string())
+        .map(|x| x.first().map(|it| it.to_string()).unwrap_or_default())
         .unwrap_or_default();
+    let ignored_devices = configs.get("IGNORE").cloned().unwrap_or_default();
 
     let mut config_changed = false;
 
@@ -309,20 +309,21 @@ fn load_config(app_dir: &Path) -> KBConfig {
         let config_str = format!(
             "TELEGRAM_BOT_TOKEN {telegram_bot_token}\nTELEGRAM_CHAT_ID {telegram_chat_id}\n"
         );
-        let mut file = File::create(&path).expect(&format!(
-            "Unable to write config file : {}",
-            path.to_string_lossy()
-        ));
-        file.write(config_str.as_bytes()).expect(&format!(
-            "Error while saving config to file {}",
-            path.to_string_lossy()
-        ));
+        let mut file = File::create(&path)
+            .unwrap_or_else(|_| panic!("Unable to write config file : {}", path.to_string_lossy()));
+        _ = file.write(config_str.as_bytes()).unwrap_or_else(|_| {
+            panic!(
+                "Error while saving config to file {}",
+                path.to_string_lossy()
+            )
+        });
         eprintln!("Config saved in {}", path.to_string_lossy());
     }
 
     KBConfig {
         telegram_bot_token,
         telegram_chat_id,
+        ignored_devices,
     }
 }
 
@@ -354,7 +355,7 @@ curl -X POST \
      "https://api.telegram.org/bot$KBWATCH_TELEGRAM_BOT_TOKEN/sendMessage"
       */
 fn send_message_ex(config: &KBConfig, message: &str, silent: bool) -> Result<()> {
-    if message.len() <= 0 {
+    if message.is_empty() {
         bail!("Empty message to send");
     }
     let json = json!(message);

@@ -39,17 +39,17 @@ impl DeviceInfos {
         DeviceInfos {
             device,
             manufacturer: handle
-                .read_manufacturer_string_ascii(&desc)
+                .read_manufacturer_string_ascii(desc)
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
             product: handle
-                .read_product_string_ascii(&desc)
+                .read_product_string_ascii(desc)
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
             serial: handle
-                .read_serial_number_string_ascii(&desc)
+                .read_serial_number_string_ascii(desc)
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
@@ -60,14 +60,14 @@ impl DeviceInfos {
     #[allow(dead_code)]
     pub fn get_name(&self) -> String {
         if !self.product.is_empty() {
-            return self.product.clone();
+            self.product.clone()
         } else if !self.manufacturer.is_empty() {
-            return self.manufacturer.clone();
+            self.manufacturer.clone()
         } else {
-            return format!(
+            format!(
                 "{:04X}:{:04X}",
                 self.device.vendor_id, self.device.product_id
-            );
+            )
         }
     }
 }
