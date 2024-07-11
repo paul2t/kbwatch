@@ -35,6 +35,11 @@ fn main() {
 
     init_logging(&app_dir);
 
+    info!("Ignore {} devices:", config.ignored_devices.len());
+    for device in &config.ignored_devices {
+        info!("Ignore device: {device}");
+    }
+
     let computer_name = hostname::get()
         .expect("Unable to retrieve hostname")
         .to_string_lossy()
@@ -122,7 +127,13 @@ fn watch_keyboard_changes(
 
         if !device_list.iter().map(|x| x.device).any(|x| x == dev) {
             let infos = DeviceInfos::new(dev, &handle, &desc);
-            if !config.ignored_devices.contains(&infos.get_name()) {
+            if !config
+                .ignored_devices
+                .contains(&infos.get_name().to_uppercase())
+                && !config.ignored_devices.contains(
+                    &format!("{:04x}:{:04x}", dev.vendor_id, dev.product_id).to_uppercase(),
+                )
+            {
                 new_devices.push(infos);
             }
         }
@@ -207,7 +218,13 @@ fn load_config(app_dir: &Path) -> KBConfig {
         .get("TELEGRAM_CHAT_ID")
         .map(|x| x.first().map(|it| it.to_string()).unwrap_or_default())
         .unwrap_or_default();
-    let ignored_devices = configs.get("IGNORE").cloned().unwrap_or_default();
+    let ignored_devices = configs
+        .get("IGNORE")
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|it| it.to_uppercase())
+        .collect();
 
     let mut config_changed = false;
 
