@@ -12,14 +12,14 @@ lto = true
 panic = "abort"
 
 [dependencies]
-chrono = "0.4.23"
+chrono = "0.4.38"
 directories = "5.0.1"
-log = "0.4.17"
+log = "0.4.22"
 simple-log = "1.6.0"
-ctrlc = "3.2.5"
-crossbeam-channel = "0.5.7"
-anyhow = "1.0.69"
-reqwest = { version = "0.11.14", features = [ "blocking" ] }
-hostname = "0.3.1"
-serde_json = "1.0.93"
-rusb = "0.9.1"
+ctrlc = "3.4.4"
+crossbeam-channel = "0.5.13"
+anyhow = "1.0.86"
+reqwest = { version = "0.12.5", features = [ "blocking" ] }
+hostname = "0.4.0"
+serde_json = "1.0.120"
+rusb = "0.9.4"
