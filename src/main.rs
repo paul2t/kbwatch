@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use log::{error, info};
 use serde_json::Value;
@@ -31,19 +32,15 @@ fn main() {
         std::fs::create_dir(&app_dir)
             .unwrap_or_else(|_| panic!("Unable to create directory {}", app_dir.to_string_lossy()));
     }
-    let config = load_config(&app_dir);
-
     init_logging(&app_dir);
-
-    info!("Ignore {} devices:", config.ignored_devices.len());
-    for device in &config.ignored_devices {
-        info!("Ignore device: {device}");
-    }
 
     let computer_name = hostname::get()
         .expect("Unable to retrieve hostname")
         .to_string_lossy()
         .to_string();
+
+    let mut config = KBConfig::default();
+    update_config(&app_dir, &mut config);
 
     if let Err(e) = send_message(&config, &format!("starting on {computer_name}")) {
         error!("{:#?}", e);
@@ -77,7 +74,10 @@ fn main() {
                 std::process::exit(1);
             }
             recv(ticks_sec) -> _ => {
-                watch_keyboard_changes(&config, &mut device_list, &computer_name);
+                update_config(&app_dir, &mut config);
+                if config.last_modified.is_some() {
+                    watch_keyboard_changes(&config, &mut device_list, &computer_name);
+                }
             }
             recv(ticks_min) -> _ => {
                 let time = Local::now();
@@ -200,14 +200,32 @@ fn watch_keyboard_changes(
 
 #[derive(Default)]
 struct KBConfig {
+    last_modified: Option<SystemTime>,
     telegram_bot_token: String,
     telegram_chat_id: String,
     ignored_devices: Vec<String>,
 }
 
-fn load_config(app_dir: &Path) -> KBConfig {
+fn update_config(app_dir: &Path, config: &mut KBConfig) {
     let mut path = app_dir.to_path_buf();
     path.push("config.txt");
+
+    let Ok(metadata) = fs::metadata(&path) else {
+        return;
+    };
+    let Ok(config_last_modified) = metadata.modified() else {
+        return;
+    };
+
+    if let Some(last_modified) = config.last_modified {
+        if config_last_modified == last_modified {
+            return;
+        }
+    }
+
+    info!("Loading config from: {}", path.display());
+    *config = KBConfig::default();
+
     let configs = load_key_value_file(&path);
 
     let mut telegram_bot_token = configs
@@ -337,10 +355,14 @@ fn load_config(app_dir: &Path) -> KBConfig {
         eprintln!("Config saved in {}", path.to_string_lossy());
     }
 
-    KBConfig {
-        telegram_bot_token,
-        telegram_chat_id,
-        ignored_devices,
+    config.last_modified = Some(config_last_modified);
+    config.telegram_bot_token = telegram_bot_token;
+    config.telegram_chat_id = telegram_chat_id;
+    config.ignored_devices = ignored_devices;
+
+    info!("Ignore {} devices:", config.ignored_devices.len());
+    for device in &config.ignored_devices {
+        info!("Ignore device: {device}");
     }
 }
 
