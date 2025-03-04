@@ -373,6 +373,7 @@ fn init_logging(app_path: &Path) {
     println!("Logging in {}", path.display());
     let config = LogConfigBuilder::builder()
         .level("info")
+        .unwrap()
         .path(path.to_string_lossy())
         .build();
     simple_log::new(config).expect("Unable to initialize the logging");
