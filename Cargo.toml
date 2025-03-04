@@ -8,8 +8,11 @@ default-run = "kbwatch"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [profile.release]
+strip = true
 lto = true
 panic = "abort"
+opt-level = "z"
+codegen-units = 1
 
 [dependencies]
 chrono = "0.4.38"
