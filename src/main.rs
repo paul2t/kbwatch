@@ -210,18 +210,15 @@ fn update_config(app_dir: &Path, config: &mut KBConfig) {
     let mut path = app_dir.to_path_buf();
     path.push("config.txt");
 
-    let Ok(metadata) = fs::metadata(&path) else {
-        return;
-    };
-    let Ok(config_last_modified) = metadata.modified() else {
-        return;
-    };
-
-    if let Some(last_modified) = config.last_modified {
-        if config_last_modified == last_modified {
+    let config_last_modified = if let Ok(metadata) = fs::metadata(&path) {
+        let config_last_modified = metadata.modified().ok();
+        if config_last_modified.is_some() && config.last_modified == config_last_modified {
             return;
         }
-    }
+        config_last_modified
+    } else {
+        None
+    };
 
     info!("Loading config from: {}", path.display());
     *config = KBConfig::default();
@@ -355,7 +352,7 @@ fn update_config(app_dir: &Path, config: &mut KBConfig) {
         eprintln!("Config saved in {}", path.to_string_lossy());
     }
 
-    config.last_modified = Some(config_last_modified);
+    config.last_modified = config_last_modified;
     config.telegram_bot_token = telegram_bot_token;
     config.telegram_chat_id = telegram_chat_id;
     config.ignored_devices = ignored_devices;
